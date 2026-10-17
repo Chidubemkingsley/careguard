@@ -75,6 +75,7 @@ import {
   type SpendingPolicy,
   type Transaction,
 } from "../shared/types.ts";
+import { computeCategoryBreakdown } from "./spending-breakdown.ts";
 import { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds } from "./tz.ts";
 export { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds };
 import { appendAuditEntry } from "../shared/audit-log.ts";
@@ -2745,6 +2746,9 @@ export function getSpendingSummary() {
     },
     transactionCount: spendingTracker.transactions.length,
     recentTransactions: spendingTracker.transactions.slice(-5),
+    // Additive (#1185): per-category totals for 7d / 30d / all-time, from
+    // completed transactions. Older clients ignore it.
+    categoryBreakdown: computeCategoryBreakdown(spendingTracker.transactions),
   };
 }
 
