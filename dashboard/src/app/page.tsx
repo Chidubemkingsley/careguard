@@ -13,6 +13,7 @@ import { BillsTab } from "../components/tabs/bills-tab";
 import { MedicationsTab } from "../components/tabs/medications-tab";
 import { OverviewTab } from "../components/tabs/overview-tab";
 import { ApprovalsTab } from "../components/tabs/approvals-tab";
+import { TasksTab } from "../components/tabs/tasks-tab";
 import { PolicyTab } from "../components/tabs/policy-tab";
 import { SettingsTab } from "../components/tabs/settings-tab";
 import { WalletTab } from "../components/tabs/wallet-tab";
@@ -193,6 +194,9 @@ export default function Dashboard() {
             loadingSpending={state.loadingSpending}
             locale={locale}
           />
+        )}
+        {activeTab === "tasks" && (
+          <TasksTab recipientId={selectedId ?? recipient.id} locale={locale} />
         )}
         {activeTab === "settings" && (
           <SettingsTab
