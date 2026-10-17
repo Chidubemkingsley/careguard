@@ -13,7 +13,7 @@
  * For interactions with equal severity, sort alphabetically by drug names.
  */
 
-import { z } from 'zod';
+import { z } from "zod";
 
 // ── Medication ────────────────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ export const PharmacyPriceSchema = z.object({
   pharmacyId: z.string().min(1),
   price: z.number().nonnegative(),
   distance: z.string().optional(),
-  inStock: z.union([z.boolean(), z.literal('unknown')]),
+  inStock: z.union([z.boolean(), z.literal("unknown")]),
 });
 
 export type PharmacyPrice = z.infer<typeof PharmacyPriceSchema>;
@@ -61,7 +61,7 @@ export const BillLineItemSchema = z.object({
   cptCode: z.string().optional(),
   chargedAmount: z.number().nonnegative(),
   fairMarketRate: z.number().nonnegative().optional(),
-  status: z.enum(['valid', 'duplicate', 'upcoded', 'unbundled', 'error']),
+  status: z.enum(["valid", "duplicate", "upcoded", "unbundled", "error"]),
   errorDescription: z.string().optional(),
   suggestedAmount: z.number().nonnegative().optional(),
 });
@@ -115,9 +115,9 @@ export type SpendingPolicy = z.infer<typeof SpendingPolicySchema>;
 export const STELLAR_TX_HASH_RE = /^[0-9a-f]{64}$/i;
 
 export const TRANSACTION_CATEGORY = {
-  MEDICATIONS: 'medications',
-  BILLS: 'bills',
-  SERVICE_FEES: 'service_fees',
+  MEDICATIONS: "medications",
+  BILLS: "bills",
+  SERVICE_FEES: "service_fees",
 } as const;
 
 export const TRANSACTION_CATEGORIES = [
@@ -132,7 +132,7 @@ export function isTransactionCategory(
   category: unknown,
 ): category is TransactionCategory {
   return (
-    typeof category === 'string' &&
+    typeof category === "string" &&
     (TRANSACTION_CATEGORIES as readonly string[]).includes(category)
   );
 }
@@ -150,7 +150,7 @@ export function normalizeTransactionCategory(
 export const TransactionSchema = z.object({
   id: z.string().min(1),
   timestamp: z.string().min(1),
-  type: z.enum(['medication', 'bill', 'service_fee']),
+  type: z.enum(["medication", "bill", "service_fee"]),
   description: z.string(),
   amount: z.number().nonnegative(),
   recipient: z.string(),
@@ -159,23 +159,68 @@ export const TransactionSchema = z.object({
   stellarTxHash: z.string().regex(STELLAR_TX_HASH_RE).optional(),
   // 'extracted': hash was successfully parsed from the x402 PAYMENT-RESPONSE header.
   // 'extraction_failed': header was present but all parse strategies failed (#191).
-  txHashStatus: z.enum(['extracted', 'extraction_failed']).optional(),
+  txHashStatus: z.enum(["extracted", "extraction_failed"]).optional(),
   mppOrderId: z.string().optional(),
   status: z.enum([
-    'pending',
-    'approved',
-    'completed',
-    'blocked',
-    'disputed',
-    'cancelled',
-    'rejected',
+    "pending",
+    "approved",
+    "completed",
+    "blocked",
+    "disputed",
+    "cancelled",
+    "rejected",
   ]),
   category: z.enum(TRANSACTION_CATEGORIES),
   pendingUntil: z.string().optional(),
   submittedAt: z.string().optional(),
+  // Optional caregiver-authored memo for personal record-keeping, distinct
+  // from the auto-generated description. Validated to the Stellar MEMO_TEXT
+  // limit (28 bytes) so it can safely be used as an on-chain memo if needed.
+  memo: z.string().max(28).optional(),
+  // Medication order fulfilment lifecycle (Feature: order tracking).
+  // Only present on medication-type transactions.
+  order_status: z.enum(["submitted", "ready", "picked_up"]).optional(),
+  order_status_history: z
+    .array(
+      z.object({
+        status: z.enum(["submitted", "ready", "picked_up"]),
+        timestamp: z.string(),
+        updatedBy: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 export type Transaction = z.infer<typeof TransactionSchema>;
+
+// ── Medication order status ───────────────────────────────────────────────────
+export const ORDER_STATUS = {
+  SUBMITTED: "submitted",
+  READY: "ready",
+  PICKED_UP: "picked_up",
+} as const;
+
+export const ORDER_STATUSES = [
+  ORDER_STATUS.SUBMITTED,
+  ORDER_STATUS.READY,
+  ORDER_STATUS.PICKED_UP,
+] as const;
+
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+// Stellar MEMO_TEXT max length in bytes — used for memo validation.
+export const STELLAR_MEMO_TEXT_MAX_BYTES = 28;
+
+// Audit-log event names that are caregiver-relevant (vs internal-only technical).
+export const CAREGIVER_AUDIT_EVENTS = [
+  "policy.updated",
+  "spending.reset",
+  "agent.policy_updated",
+  "agent.reset",
+  "agent.paused",
+  "agent.resumed",
+  "agent.auto-paused",
+] as const;
 
 // ── AgentAction ───────────────────────────────────────────────────────────────
 
@@ -213,11 +258,11 @@ export const AlertSchema = z.object({
   id: z.string().min(1),
   timestamp: z.string().min(1),
   type: z.enum([
-    'approval_needed',
-    'error_found',
-    'refill_due',
-    'budget_warning',
-    'policy_blocked',
+    "approval_needed",
+    "error_found",
+    "refill_due",
+    "budget_warning",
+    "policy_blocked",
   ]),
   title: z.string(),
   description: z.string(),

@@ -27,7 +27,7 @@ export const PharmacyPriceSchema = z.object({
   pharmacyId: z.string().optional(),
   price: z.number(),
   distance: z.string().optional(),
-  inStock: z.union([z.boolean(), z.literal('unknown')]).optional(),
+  inStock: z.union([z.boolean(), z.literal("unknown")]).optional(),
 });
 
 export const PharmacyCompareResultSchema = z.object({
@@ -69,9 +69,36 @@ export const TransactionSchema = z.object({
   pendingUntil: z.string().optional(),
   status: z.string(),
   category: z.string(),
+  // Optional caregiver-authored memo for record-keeping (Feature: payment memo).
+  memo: z.string().optional(),
+  // Medication order fulfilment lifecycle (Feature: order tracking).
+  order_status: z.enum(["submitted", "ready", "picked_up"]).optional(),
+  order_status_history: z
+    .array(
+      z.object({
+        status: z.enum(["submitted", "ready", "picked_up"]),
+        timestamp: z.string(),
+        updatedBy: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 export type Transaction = z.infer<typeof TransactionSchema>;
+
+export const ORDER_STATUS = {
+  SUBMITTED: "submitted",
+  READY: "ready",
+  PICKED_UP: "picked_up",
+} as const;
+
+export const ORDER_STATUSES = [
+  ORDER_STATUS.SUBMITTED,
+  ORDER_STATUS.READY,
+  ORDER_STATUS.PICKED_UP,
+] as const;
+
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export const AuditLogSchema = z.object({
   timestamp: z.string(),
@@ -88,7 +115,8 @@ export const SpendingDataSchema = z.object({
     monthlyLimit: z.number(),
     medicationMonthlyBudget: z.number(),
     billMonthlyBudget: z.number(),
-    approvalThreshold: z.number(), holdTimeSeconds: z.number().optional().default(86400),
+    approvalThreshold: z.number(),
+    holdTimeSeconds: z.number().optional().default(86400),
   }),
   spending: z.object({
     medications: z.number(),

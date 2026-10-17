@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { downloadTransactionPDF } from "../../app/pdf";
+import { downloadTransactionPDF, downloadAuditLogPDF } from "../../app/pdf";
 import { copyText } from "../../lib/clipboard";
 import type { RecipientProfile } from "../../lib/types";
 import { ConfirmDialog } from "../primitives/confirm-dialog";
@@ -57,7 +57,12 @@ export function ActivityTab({
   // useMemo ensures the merge only reruns when transactions or audit events change,
   // not on unrelated parent state changes (agentLog, loading flags, etc.).
   const mergedTimeline = useMemo(() => {
-    type TimelineItem = { ts: number; kind: "tx" | "audit"; id: string; data: any };
+    type TimelineItem = {
+      ts: number;
+      kind: "tx" | "audit";
+      id: string;
+      data: any;
+    };
     const txItems: TimelineItem[] = allTransactions.map((tx) => ({
       kind: "tx",
       ts: new Date(tx.timestamp).getTime(),
@@ -75,7 +80,8 @@ export function ActivityTab({
     // inputs are already ordered.
     auditItems.sort((a, b) => b.ts - a.ts);
     const merged: TimelineItem[] = [];
-    let ti = 0, ai = 0;
+    let ti = 0,
+      ai = 0;
     while (ti < txItems.length && ai < auditItems.length) {
       if (txItems[ti].ts >= auditItems[ai].ts) merged.push(txItems[ti++]);
       else merged.push(auditItems[ai++]);
@@ -109,7 +115,9 @@ export function ActivityTab({
         }}
       />
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-700">Transaction Log</h2>
+        <h2 className="text-sm font-semibold text-slate-700">
+          Transaction Log
+        </h2>
         <div className="flex items-center gap-3">
           {allTransactions.length > 0 && (
             <button
@@ -119,6 +127,46 @@ export function ActivityTab({
               className="px-3 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-xs font-medium hover:bg-sky-100 active:bg-sky-200 cursor-pointer transition-all"
             >
               Download Report
+            </button>
+          )}
+          {allTransactions.length > 0 && (
+            <button
+              onClick={() => {
+                // CSV export: transactions with memo column
+                const header =
+                  "Time,Type,Description,Memo,Amount,Status,Stellar Tx\n";
+                const rows = allTransactions
+                  .map((tx) =>
+                    [
+                      new Date(tx.timestamp).toLocaleString(),
+                      tx.type,
+                      `"${tx.description.replace(/"/g, '""')}"`,
+                      `"${(tx.memo ?? "").replace(/"/g, '""')}"`,
+                      tx.amount.toFixed(2),
+                      tx.status,
+                      tx.stellarTxHash ?? "",
+                    ].join(","),
+                  )
+                  .join("\n");
+                const blob = new Blob([header + rows], { type: "text/csv" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "careguard-transactions.csv";
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="px-3 py-1.5 bg-slate-50 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-100 active:bg-slate-200 cursor-pointer transition-all"
+            >
+              Export CSV
+            </button>
+          )}
+          {auditEvents.length > 0 && (
+            <button
+              onClick={() => downloadAuditLogPDF(auditEvents, { recipient })}
+              className="px-3 py-1.5 bg-violet-50 text-violet-700 rounded-lg text-xs font-medium hover:bg-violet-100 active:bg-violet-200 cursor-pointer transition-all"
+            >
+              Audit Report
             </button>
           )}
           <button
@@ -161,7 +209,9 @@ export function ActivityTab({
                     {entry.errorDetail ? (
                       <details className="group">
                         <summary className="cursor-pointer list-none flex items-center gap-1 hover:text-green-300">
-                          <span className="text-xs opacity-60 group-open:opacity-100">▸</span>
+                          <span className="text-xs opacity-60 group-open:opacity-100">
+                            ▸
+                          </span>
                           {entry.message}
                         </summary>
                         <div className="ml-4 mt-1 space-y-1">
@@ -173,9 +223,15 @@ export function ActivityTab({
                               if (!entry.errorDetail) return;
                               const result = await copyText(entry.errorDetail);
                               if (result === "ok" || result === "fallback") {
-                                const btn = document.activeElement as HTMLElement;
+                                const btn =
+                                  document.activeElement as HTMLElement;
                                 const orig = btn?.textContent;
-                                if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = orig; }, 1500); }
+                                if (btn) {
+                                  btn.textContent = "Copied!";
+                                  setTimeout(() => {
+                                    btn.textContent = orig;
+                                  }, 1500);
+                                }
                               }
                             }}
                             className="text-[10px] text-sky-400 hover:text-sky-300 underline"
@@ -281,11 +337,17 @@ export function ActivityTab({
                     <th className="text-left px-4 py-2 text-xs font-medium text-slate-500">
                       Description
                     </th>
+                    <th className="hidden lg:table-cell text-left px-4 py-2 text-xs font-medium text-slate-500">
+                      Memo
+                    </th>
                     <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">
                       Amount
                     </th>
                     <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">
                       Status
+                    </th>
+                    <th className="hidden sm:table-cell text-right px-4 py-2 text-xs font-medium text-slate-500">
+                      Order
                     </th>
                     <th className="text-right px-4 py-2 text-xs font-medium text-slate-500">
                       Stellar Tx
@@ -297,7 +359,10 @@ export function ActivityTab({
                     if (item.kind === "audit") {
                       const au = item.data as AuditLogEvent;
                       return (
-                        <tr key={item.id} className="border-b border-slate-100 last:border-0 bg-slate-50/50">
+                        <tr
+                          key={item.id}
+                          className="border-b border-slate-100 last:border-0 bg-slate-50/50"
+                        >
                           <td className="hidden md:table-cell px-4 py-2 text-xs text-slate-400">
                             {formatTime(new Date(au.timestamp), locale)}
                           </td>
@@ -307,12 +372,32 @@ export function ActivityTab({
                             </span>
                           </td>
                           <td className="px-4 py-2 text-xs">
-                            <span className="font-semibold text-slate-700">{au.event}</span>
-                            {au.details?.tool && <span className="text-slate-500 ml-1">— Tool: {au.details.tool}</span>}
+                            <span className="font-semibold text-slate-700">
+                              {au.event}
+                            </span>
+                            {au.details?.tool && (
+                              <span className="text-slate-500 ml-1">
+                                — Tool: {au.details.tool}
+                              </span>
+                            )}
                           </td>
-                          <td className="px-4 py-2 text-right text-xs font-mono text-slate-400">-</td>
-                          <td className="px-4 py-2 text-right text-xs text-slate-500">{au.actor}</td>
-                          <td className="px-4 py-2 text-right text-xs text-slate-400">-</td>
+                          {/* memo column — empty for audit rows */}
+                          <td className="hidden lg:table-cell px-4 py-2 text-xs text-slate-400">
+                            -
+                          </td>
+                          <td className="px-4 py-2 text-right text-xs font-mono text-slate-400">
+                            -
+                          </td>
+                          <td className="px-4 py-2 text-right text-xs text-slate-500">
+                            {au.actor}
+                          </td>
+                          {/* order status column — empty for audit rows */}
+                          <td className="hidden sm:table-cell px-4 py-2 text-right text-xs text-slate-400">
+                            -
+                          </td>
+                          <td className="px-4 py-2 text-right text-xs text-slate-400">
+                            -
+                          </td>
                         </tr>
                       );
                     }
@@ -339,6 +424,10 @@ export function ActivityTab({
                           </span>
                         </td>
                         <td className="px-4 py-2 text-xs">{tx.description}</td>
+                        {/* Memo — only shown on large screens; empty dash if not set */}
+                        <td className="hidden lg:table-cell px-4 py-2 text-xs text-slate-500 italic">
+                          {tx.memo ?? "-"}
+                        </td>
                         <td className="px-4 py-2 text-right text-xs font-mono">
                           $
                           {tx.amount < 0.01
@@ -358,8 +447,33 @@ export function ActivityTab({
                             {tx.status}
                           </span>
                         </td>
+                        {/* Order status badge — only for medication transactions */}
+                        <td className="hidden sm:table-cell px-4 py-2 text-right">
+                          {tx.type === "medication" && tx.order_status ? (
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                tx.order_status === "picked_up"
+                                  ? "bg-green-100 text-green-700"
+                                  : tx.order_status === "ready"
+                                    ? "bg-amber-100 text-amber-700"
+                                    : "bg-slate-100 text-slate-500"
+                              }`}
+                            >
+                              {tx.order_status === "picked_up"
+                                ? "Picked up"
+                                : tx.order_status === "ready"
+                                  ? "Ready"
+                                  : "Submitted"}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-300">—</span>
+                          )}
+                        </td>
                         <td className="px-4 py-2 text-right">
-                          <TxLink hash={tx.stellarTxHash} txHashStatus={tx.txHashStatus} />
+                          <TxLink
+                            hash={tx.stellarTxHash}
+                            txHashStatus={tx.txHashStatus}
+                          />
                         </td>
                       </tr>
                     );

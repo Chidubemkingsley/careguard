@@ -6,6 +6,8 @@ import {
   DrugInteractionResultSchema,
   PharmacyCompareResultSchema,
   type RecipientProfile,
+  type Transaction,
+  ORDER_STATUS,
 } from "../../lib/types";
 import type { AgentResult } from "../types";
 
@@ -14,9 +16,26 @@ const MEDS = ["Lisinopril", "Metformin", "Atorvastatin", "Amlodipine"] as const;
 export interface MedicationsTabProps {
   agentResult: AgentResult | null;
   recipient: RecipientProfile;
+  /** All medication transactions — used to show order lifecycle status. */
+  allTransactions?: Transaction[];
 }
 
-export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) {
+export function MedicationsTab({
+  agentResult,
+  recipient,
+  allTransactions = [],
+}: MedicationsTabProps) {
+  // Find the most recent medication order for each drug name
+  const latestOrderByDrug = allTransactions
+    .filter((tx) => tx.type === "medication" && tx.order_status)
+    .reduce<Record<string, Transaction>>((acc, tx) => {
+      const key = tx.description.split(" from ")[0].toLowerCase();
+      if (!acc[key] || new Date(tx.timestamp) > new Date(acc[key].timestamp)) {
+        acc[key] = tx;
+      }
+      return acc;
+    }, {});
+
   const hasPriceResults = agentResult?.toolCalls.some(
     (t) => t.tool === "compare_pharmacy_prices",
   );
@@ -79,7 +98,30 @@ export function MedicationsTab({ agentResult, recipient }: MedicationsTabProps) 
                 className="flex items-center justify-between p-4 bg-slate-50 rounded-lg"
               >
                 <div>
-                  <div className="font-medium text-sm">{drug}</div>
+                  <div className="font-medium text-sm flex items-center gap-2">
+                    {drug}
+                    {latestOrderByDrug[drug.toLowerCase()]?.order_status && (
+                      <span
+                        className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          latestOrderByDrug[drug.toLowerCase()].order_status ===
+                          "picked_up"
+                            ? "bg-green-100 text-green-700"
+                            : latestOrderByDrug[drug.toLowerCase()]
+                                  .order_status === "ready"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-slate-100 text-slate-500"
+                        }`}
+                      >
+                        {latestOrderByDrug[drug.toLowerCase()].order_status ===
+                        "picked_up"
+                          ? "✓ Picked up"
+                          : latestOrderByDrug[drug.toLowerCase()]
+                                .order_status === "ready"
+                            ? "⏳ Ready for pickup"
+                            : "📦 Submitted"}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-slate-500">
                     {r
                       ? `Best: ${r.cheapest.pharmacyName} at $${r.cheapest.price}`
