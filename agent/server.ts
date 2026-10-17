@@ -48,6 +48,8 @@ import {
 import { getAdherenceTimeline, getPendingAdherences, skipAdherence } from "../shared/adherence.ts";
 import { createVitalsStore } from "../services/vitals/db.ts";
 import { createVitalsRouter } from "../services/vitals/routes.ts";
+import { getInteractionCheckStore } from "../services/interaction-checks/db.ts";
+import { createInteractionChecksRouter } from "../services/interaction-checks/routes.ts";
 import { notify } from "../shared/notifications.ts";
 import { resolveStellarNetwork, validateSignerKeyForNetwork } from "../shared/stellar-network.ts";
 import { verifyWebhook } from "../shared/verify-webhook.ts";
@@ -599,6 +601,8 @@ app.post("/agent/adherence/skip", (req, res) => {
 
 // --- Vitals endpoints (#1237) ---
 app.use("/agent", createVitalsRouter(createVitalsStore()));
+// #1193: searchable history of past drug interaction checks.
+app.use("/agent", createInteractionChecksRouter(getInteractionCheckStore()));
 
 // --- Dispute letter endpoint (#266) ---
 app.post("/agent/dispute-letter", (req, res) => {
