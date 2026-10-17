@@ -76,5 +76,53 @@ export function createCareRecipientsRouter(store: CareRecipientsStore, caregiver
     res.status(201).json(created);
   });
 
+  // ── Shared caregiver task checklist (Issue #1200) ──────────────────────────
+
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  router.get("/recipients/:id/tasks", auth, (req, res) => {
+    if (!store.getById(req.params.id)) {
+      res.status(404).json({ error: "Care recipient not found" });
+      return;
+    }
+    res.json(store.listTasks(req.params.id));
+  });
+
+  router.post("/recipients/:id/tasks", auth, (req, res) => {
+    if (!store.getById(req.params.id)) {
+      res.status(404).json({ error: "Care recipient not found" });
+      return;
+    }
+    const body = (req.body ?? {}) as { title?: unknown; assignee?: unknown; due_date?: unknown };
+    if (typeof body.title !== "string" || !body.title.trim()) {
+      res.status(400).json({ error: "title is required" });
+      return;
+    }
+    if (body.due_date != null && (typeof body.due_date !== "string" || !DATE_RE.test(body.due_date))) {
+      res.status(400).json({ error: "due_date must be YYYY-MM-DD" });
+      return;
+    }
+    const created = store.createTask(req.params.id, {
+      title: body.title.trim().slice(0, 200),
+      assignee: typeof body.assignee === "string" && body.assignee.trim() ? body.assignee.trim() : null,
+      due_date: (body.due_date as string | undefined) ?? null,
+    });
+    res.status(201).json(created);
+  });
+
+  router.patch("/recipients/:id/tasks/:taskId", auth, (req, res) => {
+    const done = (req.body as { done?: unknown } | undefined)?.done;
+    if (typeof done !== "boolean") {
+      res.status(400).json({ error: "done must be a boolean" });
+      return;
+    }
+    const updated = store.setTaskDone(req.params.id, req.params.taskId, done);
+    if (!updated) {
+      res.status(404).json({ error: "Task not found" });
+      return;
+    }
+    res.json(updated);
+  });
+
   return router;
 }

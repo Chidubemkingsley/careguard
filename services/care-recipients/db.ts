@@ -17,6 +17,28 @@ export interface CareRecipientEntity {
   caregiver_user_id: string | null;
 }
 
+/** A non-payment caregiving task for one recipient (Issue #1200). */
+export interface CareTaskEntity {
+  id: string;
+  recipient_id: string;
+  title: string;
+  /** Name of the linked caregiver it's assigned to, or null if unassigned. */
+  assignee: string | null;
+  /** Due date as YYYY-MM-DD, or null. */
+  due_date: string | null;
+  done: boolean;
+  completed_at: string | null;
+  created_at: string;
+}
+
+interface CareTaskRow extends Omit<CareTaskEntity, 'done'> {
+  done: number;
+}
+
+function rowToTask(row: CareTaskRow): CareTaskEntity {
+  return { ...row, done: row.done === 1 };
+}
+
 interface CareRecipientRow {
   id: string;
   name: string;
@@ -80,6 +102,20 @@ export class CareRecipientsStore {
         insurance TEXT,
         caregiver_user_id TEXT
       );
+
+      -- Shared caregiver checklist (Issue #1200). Completed tasks are kept
+      -- (done = 1, completed_at set) so the dashboard can show a history.
+      CREATE TABLE IF NOT EXISTS care_tasks (
+        id TEXT PRIMARY KEY,
+        recipient_id TEXT NOT NULL REFERENCES care_recipients(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        assignee TEXT,
+        due_date TEXT,
+        done INTEGER NOT NULL DEFAULT 0,
+        completed_at TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_care_tasks_recipient ON care_tasks(recipient_id, done);
     `);
   }
 
@@ -137,6 +173,49 @@ export class CareRecipientsStore {
     );
     return this.getById(id)!;
   }
+
+  /** Open tasks first (soonest due, undated last), then completed ones newest first. */
+  listTasks(recipientId: string): CareTaskEntity[] {
+    const rows = this.db
+      .prepare(`
+        SELECT * FROM care_tasks WHERE recipient_id = ?
+        ORDER BY done ASC,
+                 CASE WHEN done = 0 THEN due_date IS NULL END ASC,
+                 CASE WHEN done = 0 THEN due_date END ASC,
+                 completed_at DESC,
+                 created_at ASC
+      `)
+      .all(recipientId) as CareTaskRow[];
+    return rows.map(rowToTask);
+  }
+
+  createTask(recipientId: string, input: NewCareTask): CareTaskEntity {
+    const id = `task_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    this.db.prepare(`
+      INSERT INTO care_tasks (id, recipient_id, title, assignee, due_date, done, created_at)
+      VALUES (?, ?, ?, ?, ?, 0, ?)
+    `).run(id, recipientId, input.title, input.assignee ?? null, input.due_date ?? null, new Date().toISOString());
+    return this.getTask(id)!;
+  }
+
+  /** Marks a task done (kept for history) or reopens it. */
+  setTaskDone(recipientId: string, taskId: string, done: boolean): CareTaskEntity | undefined {
+    const result = this.db
+      .prepare('UPDATE care_tasks SET done = ?, completed_at = ? WHERE id = ? AND recipient_id = ?')
+      .run(done ? 1 : 0, done ? new Date().toISOString() : null, taskId, recipientId);
+    return Number(result.changes) === 0 ? undefined : this.getTask(taskId);
+  }
+
+  private getTask(id: string): CareTaskEntity | undefined {
+    const row = this.db.prepare('SELECT * FROM care_tasks WHERE id = ?').get(id) as CareTaskRow | undefined;
+    return row ? rowToTask(row) : undefined;
+  }
+}
+
+export interface NewCareTask {
+  title: string;
+  assignee?: string | null;
+  due_date?: string | null;
 }
 
 export function createCareRecipientsStore(dbPath?: string): CareRecipientsStore {
