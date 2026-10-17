@@ -167,6 +167,20 @@ export const AdherenceTimelineEventSchema = z.object({
 
 export type AdherenceTimelineEvent = z.infer<typeof AdherenceTimelineEventSchema>;
 
+/** A persisted drug interaction check (#1193). */
+export const InteractionCheckSchema = z.object({
+  id: z.string(),
+  recipient_id: z.string(),
+  medications: z.array(z.string()),
+  interaction_count: z.number(),
+  highest_severity: z.string().nullable(),
+  summary: z.string().nullable(),
+  interactions: z.array(z.unknown()),
+  checked_at: z.string(),
+});
+
+export type InteractionCheck = z.infer<typeof InteractionCheckSchema>;
+
 /** Human-readable reading, e.g. "128/82 mmHg" or "162 lb". */
 export function formatVital(v: Pick<Vital, "type" | "value" | "secondary_value" | "unit">): string {
   const reading =
