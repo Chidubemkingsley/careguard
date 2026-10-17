@@ -27,7 +27,7 @@ import lock from "proper-lockfile";
 import { z } from "zod";
 
 // x402 middleware
-import { applyX402Middleware } from "./shared/x402-middleware.ts";
+import { applyX402Middleware } from "./shared/x402-verify-middleware.ts";
 import { createCorsMiddleware } from "./shared/cors.ts";
 import { applySecurityMiddleware } from "./shared/security-middleware.ts";
 import { createApiDocsRouter } from "./shared/api-docs.ts";
@@ -44,13 +44,22 @@ import {
   validateBillAuditRequest,
 } from "./shared/bill-audit.ts";
 import { sanitizeUserString } from "./shared/sanitize.ts";
+import { registerKnownNames } from "./shared/redact.ts";
 
 // Sentry (gated by SENTRY_DSN)
 import { initSentry } from "./shared/sentry.ts";
+import {
+  loadRecipientAllergies,
+  addRecipientAllergy,
+  removeRecipientAllergy,
+} from "./shared/allergies.ts";
+import { loadPresenceMap, recordItemView } from "./shared/presence.ts";
+import { extractLineItemsFromBillImage } from "./shared/bill-ocr.ts";
+import { runPriceWatchForRecipient } from "./agent/price-watch.ts";
 
 // Observability
-import { requestContextMiddleware } from "./shared/request-context.ts";
-import { requestLoggerMiddleware } from "./shared/request-logger.ts";
+import { requestLifecycleMiddleware } from "./shared/request-lifecycle.ts";
+import { gracefulShutdown } from "./shared/graceful-shutdown.ts";
 import {
   metricsHandler,
   agentRunsTotal,
@@ -67,7 +76,7 @@ import {
   isPaused,
   type PauseReason,
 } from "./shared/agent-state.ts";
-import { checkWalletBalance, formatResult } from "./shared/wallet-balance.ts";
+import { checkWalletBalance, formatResult, fetchWalletBalances } from "./shared/wallet-balance.ts";
 import { appendAuditEntry, auditRouter } from "./shared/audit-log.ts";
 import { pushTokenRouter } from "./shared/push-tokens.ts";
 import {
@@ -81,6 +90,7 @@ import {
   concurrentRequestsMiddleware,
 } from "./shared/rate-limit.ts";
 import { agentQueue } from "./shared/agent-queue.ts";
+import { paginateTransactions } from "./shared/transaction-pagination.ts";
 
 // Agent tools
 import {
@@ -92,6 +102,7 @@ import {
   getSpendingTracker,
   resetSpendingTracker,
   SpendingPolicySchema,
+  previewSpendingPolicy,
 } from "./agent/tools.ts";
 import { executeTool, runAgent } from "./agent/runner.ts";
 import { resolveRequestedDosage } from "./services/pharmacy-api/dosage.ts";
@@ -103,6 +114,8 @@ import {
 } from "./shared/pharmacy-pricing.ts";
 import { createCareRecipientsStore } from "./services/care-recipients/db.ts";
 import { createCareRecipientsRouter } from "./services/care-recipients/routes.ts";
+import { createVitalsStore } from "./services/vitals/db.ts";
+import { createVitalsRouter } from "./services/vitals/routes.ts";
 import {
   buildCompareResponse,
   DrugRecordSchema,
@@ -286,8 +299,7 @@ app.use((req, res, next) =>
     next,
   ),
 );
-app.use(requestContextMiddleware());
-app.use(requestLoggerMiddleware());
+app.use(requestLifecycleMiddleware());
 app.use("/agent", requireApiKey);
 app.use("/agent/audit", auditRouter);
 app.use("/agent/push-tokens", pushTokenRouter);
@@ -411,12 +423,18 @@ app.patch("/agent/profile", (req, res) => {
   const { recipient, caregiver } = req.body ?? {};
   if (recipient && typeof recipient === "object") {
     _profileData.recipient = { ..._profileData.recipient, ...recipient };
+    if (recipient.name) {
+      registerKnownNames([recipient.name]);
+    }
     if (Array.isArray(recipient.medications)) {
       _profileData.recipient.medications = recipient.medications;
     }
   }
   if (caregiver && typeof caregiver === "object") {
     _profileData.caregiver = { ..._profileData.caregiver, ...caregiver };
+    if (caregiver.name) {
+      registerKnownNames([caregiver.name]);
+    }
   }
   res.json(_profileData);
 });
@@ -430,27 +448,16 @@ const PHARMACY_ADMIN_TOKEN =
 const pharmacyStore = createPharmacyPricingStore();
 const recipientsStore = createCareRecipientsStore();
 
-function requirePharmacyAdmin(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction,
-) {
-  const auth = req.headers.authorization;
-  if (!auth?.startsWith("Bearer ")) {
-    res
-      .status(401)
-      .setHeader("WWW-Authenticate", "Bearer")
-      .json({ error: "Missing admin token" });
-    return;
-  }
-
-  if (auth.slice("Bearer ".length) !== PHARMACY_ADMIN_TOKEN) {
-    res.status(403).json({ error: "Invalid admin token" });
-    return;
-  }
-
-  next();
+// Register default names and database names on server startup
+registerKnownNames([_profileData.recipient.name, _profileData.caregiver.name]);
+try {
+  const dbRecipients = recipientsStore.list();
+  registerKnownNames(dbRecipients.map((r) => r.name));
+} catch (e) {
+  // Ignore errors if DB is empty or not seeded yet
 }
+
+const requirePharmacyAdmin = createPharmacyAdminAuth(PHARMACY_ADMIN_TOKEN);
 
 app.get("/pharmacy/drugs", (_req, res) => {
   const drugs = pharmacyStore.listDrugs();
@@ -1039,25 +1046,13 @@ app.get("/agent/spending", (_req, res) => {
   res.json(getSpendingSummary());
 });
 app.get("/agent/transactions", (req, res) => {
-  const limit = parseInt(req.query.limit as string) || 25;
-  const offset = parseInt(req.query.offset as string) || 0;
   const tracker = getSpendingTracker();
-  const totalTransactions = tracker.transactions.length;
-  const paginatedTransactions = tracker.transactions
-    .slice(-offset - limit, -offset || undefined)
-    .reverse();
-
-  res.json({
-    ...tracker,
-    transactions: paginatedTransactions,
-    pagination: {
-      total: totalTransactions,
-      limit,
-      offset,
-      hasMore: offset + limit < totalTransactions,
-      hasPrevious: offset > 0,
-    },
-  });
+  const { transactions, pagination } = paginateTransactions(
+    tracker.transactions,
+    req.query.limit,
+    req.query.offset,
+  );
+  res.json({ ...tracker, transactions, pagination });
 });
 app.post("/agent/policy", (req, res) => {
   const result = SpendingPolicySchema.safeParse(req.body);
@@ -1077,6 +1072,18 @@ app.post("/agent/policy", (req, res) => {
     },
   });
   res.json({ success: true, policy: result.data });
+});
+// #1237: manual vitals logging, charted alongside medication adherence.
+app.use("/agent", createVitalsRouter(createVitalsStore()));
+// #1238: preview a policy change against recent payment history.
+app.post("/agent/policy/preview", (req, res) => {
+  const result = SpendingPolicySchema.safeParse(req.body);
+  if (!result.success) {
+    return res
+      .status(400)
+      .json({ error: "Invalid policy", issues: result.error.issues });
+  }
+  res.json({ impact: previewSpendingPolicy(result.data) });
 });
 app.post("/agent/reset", (req, res) => {
   resetSpendingTracker();
@@ -1210,13 +1217,48 @@ async function startWalletBalanceScheduler(): Promise<void> {
   logger.info({ expr }, "wallet balance scheduler armed");
 }
 
+async function startPriceWatchScheduler(): Promise<void> {
+  if (process.env.PRICE_WATCH_ENABLED === "0") return;
+  const cronExpr = process.env.PRICE_WATCH_CRON || "0 8 * * *";
+
+  let cron: any;
+  try {
+    cron = await import("node-cron");
+  } catch {
+    logger.warn(
+      "price-watch scheduler enabled but node-cron not installed — falling back to setInterval(24h)",
+    );
+    setInterval(() => {
+      runPriceWatchForRecipient("rosa").catch((err) =>
+        logger.warn({ err: err?.message }, "[price-watch] error in interval run"),
+      );
+    }, 24 * 60 * 60_000);
+    return;
+  }
+
+  const expr = cron.validate?.(cronExpr) ? cronExpr : "0 8 * * *";
+  cron.schedule(expr, async () => {
+    try {
+      await runPriceWatchForRecipient("rosa");
+    } catch (err: any) {
+      logger.warn({ err: err?.message }, "[price-watch] error in scheduled run");
+    }
+  });
+
+  logger.info({ expr }, "medication price-watch scheduler armed");
+}
+
 export async function bootAccountCheck(
   serverInstance: Horizon.Server = horizonServer,
   publicKey: string = agentKeypair.publicKey(),
   timeoutMs: number = 10000,
 ): Promise<{ success: boolean; usdcBalance: string }> {
   try {
-    const accountPromise = serverInstance.loadAccount(publicKey);
+    const fetchPromise = fetchWalletBalances(
+      publicKey,
+      STELLAR_CONFIG.horizonUrl,
+      env.data.USDC_ISSUER || "",
+    );
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(
         () => reject(new Error("Horizon loadAccount timeout (10s)")),
@@ -1224,9 +1266,8 @@ export async function bootAccountCheck(
       ),
     );
 
-    const acc: any = await Promise.race([accountPromise, timeoutPromise]);
-    const usdc = acc.balances.find((b: any) => b.asset_code === "USDC");
-    const usdcBalance = usdc?.balance || "0";
+    const balances = await Promise.race([fetchPromise, timeoutPromise]);
+    const usdcBalance = balances.usdc.toFixed(2);
     isDegradedMode = false;
     return { success: true, usdcBalance };
   } catch (err: any) {
@@ -1258,16 +1299,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     startOrderStatusReminderCron();
   });
 
-  process.on("SIGTERM", () => {
-    logger.info("SIGTERM received. Draining server...");
-    isDraining = true;
-    server.close(() => {
-      logger.info("Server closed. Exiting process.");
-      process.exit(0);
-    });
-    setTimeout(() => {
-      logger.error("Graceful shutdown timeout. Forcing exit.");
-      process.exit(1);
-    }, 30000);
+  gracefulShutdown({
+    server,
+    onDrainStart: () => {
+      isDraining = true;
+    },
   });
 }

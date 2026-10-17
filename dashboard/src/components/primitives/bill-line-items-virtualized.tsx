@@ -19,6 +19,7 @@ export interface BillLineItemsVirtualizedProps {
 function ItemRow({ item }: { item: BillLineItem }) {
   return (
     <div
+      data-testid="line-item"
       className={`flex items-center justify-between p-3 rounded-lg text-sm ${
         item.status === "valid"
           ? "bg-slate-50"
@@ -30,7 +31,7 @@ function ItemRow({ item }: { item: BillLineItem }) {
       <div className="flex-1">
         <div className="font-medium">{item.description}</div>
         <div className="hidden md:block text-xs text-slate-500">
-          CPT: {item.cptCode}
+          CPT: {item.cptCode || "N/A"}
         </div>
         <details className="md:hidden mt-1">
           <summary className="cursor-pointer text-xs text-slate-500">
@@ -75,7 +76,10 @@ export function BillLineItemsVirtualized({ lineItems }: BillLineItemsVirtualized
       <div className="overflow-x-auto rounded-lg shadow-[inset_-10px_0_12px_-12px_rgba(15,23,42,0.25)]">
         <div className="space-y-2 min-w-[640px]">
           {lineItems.map((item, j) => (
-            <ItemRow key={j} item={item} />
+            <ItemRow
+              key={`${item.description}-${item.cptCode ?? "na"}-${j}`}
+              item={item}
+            />
           ))}
         </div>
       </div>
@@ -101,9 +105,10 @@ export function BillLineItemsVirtualized({ lineItems }: BillLineItemsVirtualized
         >
           {virtualizer.getVirtualItems().map((virtualItem) => {
             const item = lineItems[virtualItem.index];
+            const stableKey = `${item.description}:${item.cptCode ?? ""}:${item.chargedAmount}`;
             return (
               <div
-                key={virtualItem.index}
+                key={stableKey}
                 style={{
                   position: "absolute",
                   top: 0,

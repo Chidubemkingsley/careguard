@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { getTranslations } from '../i18n';
+import { POLICY_FIELD_T_KEY } from './policy-field-labels';
 
 export const SpendingPolicyInput = z.object({
   dailyLimit: z.number(),
@@ -22,14 +24,16 @@ export type PolicyValidation = {
   isValid: boolean;
 };
 
-const FIELD_LABEL: Record<keyof SpendingPolicyInput, string> = {
-  dailyLimit: 'Daily limit',
-  monthlyLimit: 'Monthly limit',
-  medicationMonthlyBudget: 'Medication budget',
-  billMonthlyBudget: 'Bill budget',
-  approvalThreshold: 'Approval threshold',
-  holdTimeSeconds: 'Hold time before auto-approval (seconds)',
-};
+// Validation messages use the English labels — same source of truth
+// (POLICY_FIELD_T_KEY + translation entries) that policy-tab.tsx uses to
+// render the field labels the caregiver actually sees (#1144).
+const enPolicy = getTranslations('en').policy;
+const FIELD_LABEL: Record<keyof SpendingPolicyInput, string> = Object.fromEntries(
+  (Object.keys(POLICY_FIELD_T_KEY) as Array<keyof SpendingPolicyInput>).map((field) => [
+    field,
+    enPolicy[POLICY_FIELD_T_KEY[field] as keyof typeof enPolicy],
+  ]),
+) as Record<keyof SpendingPolicyInput, string>;
 
 export function validatePolicy(input: unknown): PolicyValidation {
   const errors: PolicyFieldError[] = [];

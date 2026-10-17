@@ -1,8 +1,15 @@
+/**
+ * Internationalization (i18n) helper layer for CareGuard dashboard.
+ *
+ * Provides translation lookup via getTranslations() and locale-aware
+ * currency, date, time, and number formatting helpers.
+ */
 import en from "../messages/en.json";
 import es from "../messages/es.json";
 
 export const locales = ["en", "es"] as const;
 export type Locale = (typeof locales)[number];
+export const DEFAULT_LOCALE: Locale = "en";
 
 export const translations: Record<Locale, typeof en> = { en, es };
 

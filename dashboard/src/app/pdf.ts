@@ -10,7 +10,8 @@ import type {
   DisputeLetter,
 } from "../lib/types";
 import { DEFAULT_PDF_THEME, type PdfTheme } from "../lib/pdf-theme";
-import type { RecipientProfile } from "../lib/types";
+import { formatVital, type RecipientProfile, type Vital } from "../lib/types";
+import { TX_HASH_DISPLAY_LENGTH, truncateTransactionHash } from "../lib/tx-hash";
 
 type AutoTableDoc = jsPDF & { lastAutoTable?: { finalY: number } };
 
@@ -21,7 +22,7 @@ function formatTxHashDisplay(hash?: string): {
   if (!hash) return { display: "-", decodeFailed: false };
 
   if (hash.length === 64 && /^[0-9a-f]{64}$/i.test(hash)) {
-    return { display: `${hash.slice(0, 16)}...`, decodeFailed: false };
+    return { display: truncateTransactionHash(hash), decodeFailed: false };
   }
 
   if (hash.length > 64) {
@@ -35,13 +36,13 @@ function formatTxHashDisplay(hash?: string): {
           extracted.length > 16 ? `${extracted.slice(0, 16)}...` : extracted;
         return { display: trimmed, decodeFailed: false };
       }
-      return { display: `${hash.slice(0, 16)}... ?`, decodeFailed: true };
+      return { display: `${truncateTransactionHash(hash)} ?`, decodeFailed: true };
     } catch {
-      return { display: `${hash.slice(0, 16)}... ?`, decodeFailed: true };
+      return { display: `${truncateTransactionHash(hash)} ?`, decodeFailed: true };
     }
   }
 
-  return { display: `${hash.slice(0, 16)}... ?`, decodeFailed: true };
+  return { display: `${truncateTransactionHash(hash)} ?`, decodeFailed: true };
 }
 
 function formatRecipient(recipient: RecipientProfile): string {
@@ -346,6 +347,68 @@ export function downloadMedicationPDF(
       bodyStyles: { fontSize: 7 },
       columnStyles: { 3: { cellWidth: 70 } },
     });
+    y = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 8 : y + 30;
+  }
+
+  // Logged vitals (#1237) — only when the caregiver has recorded any, so the
+  // doctor sees readings next to the medication regimen.
+  const vitals = [...(options?.vitals ?? [])].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+  );
+  if (vitals.length > 0) {
+    if (y > 240) { doc.addPage(); y = 20; }
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Vitals", 14, y);
+    y += 4;
+
+    const typeNames: Record<Vital["type"], string> = {
+      weight: "Weight",
+      blood_pressure: "Blood Pressure",
+      glucose: "Glucose",
+    };
+    autoTable(doc, {
+      startY: y,
+      head: [["Date", "Vital", "Reading"]],
+      body: vitals.map((v) => [new Date(v.timestamp).toLocaleString(), typeNames[v.type], formatVital(v)]),
+      headStyles: { fillColor: theme.headerColor, fontSize: 7 },
+      bodyStyles: { fontSize: 7 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      margin: { left: 14, right: 14 },
+    });
+  }
+
+  // Documented Allergies & Adverse Reactions (Issue #1230)
+  if ((params.allergies?.length ?? 0) > 0 && params.allergies) {
+    y = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 8 : y + 10;
+    if (y > 240) { doc.addPage(); y = 20; }
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Documented Allergies & Adverse Reactions", 14, y);
+    y += 4;
+
+    autoTable(doc, {
+      startY: y,
+      head: [["Substance", "Severity", "Reaction", "Notes"]],
+      body: params.allergies.map((a) => [
+        a.substance,
+        a.severity.toUpperCase().replace("_", "-"),
+        a.reaction || "Unspecified",
+        a.notes || "-",
+      ]),
+      headStyles: { fillColor: [239, 68, 68], fontSize: 7 },
+      bodyStyles: { fontSize: 7 },
+      margin: { left: 14, right: 14 },
+      didParseCell: (data) => {
+        if (data.section === "body" && data.column.index === 1) {
+          const val = String(data.cell.raw || "");
+          if (val === "LIFE-THREATENING" || val === "SEVERE") {
+            data.cell.styles.textColor = [220, 38, 38];
+            data.cell.styles.fontStyle = "bold";
+          }
+        }
+      },
+    });
   }
 
   addFooter(doc);
@@ -419,7 +482,7 @@ export function downloadTransactionPDF(
       ["Time", "Type", "Description", "Memo", "Amount", "Status", "Stellar Tx"],
     ],
     body: transactions.map((tx) => {
-      const { display } = formatTxHashDisplay(tx.stellarTxHash);
+      const { display, decodeFailed } = formatTxHashDisplay(tx.stellarTxHash);
       return [
         new Date(tx.timestamp).toLocaleString(),
         tx.type,
@@ -427,7 +490,12 @@ export function downloadTransactionPDF(
         (tx as any).memo ?? "-",
         `$${tx.amount < 0.01 ? tx.amount.toFixed(4) : tx.amount.toFixed(2)}`,
         tx.status,
-        display,
+        decodeFailed
+          ? {
+              content: display,
+              styles: { fontStyle: "italic", textColor: [185, 28, 28] },
+            }
+          : display,
       ];
     }),
     headStyles: { fillColor: theme.headerColor, fontSize: 7 },
