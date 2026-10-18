@@ -631,6 +631,8 @@ app.post("/agent/adherence/skip", (req, res) => {
 
 // --- Vitals endpoints (#1237) ---
 app.use("/agent", createVitalsRouter(createVitalsStore()));
+// #1193: searchable history of past drug interaction checks.
+app.use("/agent", createInteractionChecksRouter(getInteractionCheckStore()));
 
 // --- Dispute letter endpoint (#266) ---
 app.post("/agent/dispute-letter", (req, res) => {

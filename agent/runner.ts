@@ -50,6 +50,7 @@ import {
   fetchToolResult,
   serializeToolResultForPrompt,
 } from "./tool-result.ts";
+import { recordInteractionCheck } from "../services/interaction-checks/db.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -207,6 +208,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         break;
       case "check_drug_interactions":
         result = await checkDrugInteractions(input.medications as string[]);
+        // #1193: keep a per-recipient history of completed checks.
+        recordInteractionCheck(rid, input.medications as string[], result);
         break;
       case "check_allergies":
         result = checkRecipientAllergies(input.medications as string[], rid);
