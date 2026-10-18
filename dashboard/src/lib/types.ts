@@ -82,6 +82,14 @@ export const AuditLogSchema = z.object({
 
 export type AuditLogEvent = z.infer<typeof AuditLogSchema>;
 
+export const CategoryTotalsSchema = z.object({
+  medications: z.number(),
+  bills: z.number(),
+  serviceFees: z.number(),
+  total: z.number(),
+  count: z.number(),
+});
+
 export const SpendingDataSchema = z.object({
   policy: z.object({
     dailyLimit: z.number(),
@@ -102,9 +110,18 @@ export const SpendingDataSchema = z.object({
   }),
   transactionCount: z.number(),
   recentTransactions: z.array(TransactionSchema),
+  // #1185: per-category totals per range. Optional so older agents still parse.
+  categoryBreakdown: z
+    .object({
+      "7d": CategoryTotalsSchema,
+      "30d": CategoryTotalsSchema,
+      all: CategoryTotalsSchema,
+    })
+    .optional(),
 });
 
 export type SpendingData = z.infer<typeof SpendingDataSchema>;
+export type CategoryTotals = z.infer<typeof CategoryTotalsSchema>;
 
 export type RecipientProfile = {
   name: string;

@@ -174,6 +174,7 @@ export default function Dashboard() {
             loadingWalletBalance={state.loadingWalletBalance}
             onRetryWalletBalance={state.retryWalletBalance}
             loadingAgentInfo={state.loadingAgentInfo}
+            spending={state.spending}
           />
         )}
         {activeTab === "activity" && (
