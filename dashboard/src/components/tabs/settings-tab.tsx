@@ -13,6 +13,11 @@ import { getTranslations, type Locale } from "../../i18n";
 import { AGENT_URL } from "../../lib/agent-url";
 import { agentFetch } from "../../lib/agent-fetch";
 import { LinkedCaregiversSection } from "../linked-caregivers-section";
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationChannel,
+  type NotificationEventType,
+} from "../../../../shared/notifications";
 
 export interface RecipientOption {
   id: string;
@@ -60,6 +65,7 @@ export function SettingsTab({
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState(false);
   const [postSaveChangedFields, setPostSaveChangedFields] = useState<string[] | null>(null);
+  const [notificationPrefs, setNotificationPrefs] = useState(DEFAULT_NOTIFICATION_PREFERENCES);
 
   // --- Recipient Allergies State & Handlers (Issue #1230) ---
   const [allergies, setAllergies] = useState<RecipientAllergy[]>([
@@ -198,6 +204,30 @@ export function SettingsTab({
     if (!onSelectRecipient || switching || id === (selectedRecipientId ?? "")) return;
     setSwitching(true);
     onSelectRecipient(id);
+  };
+
+  const updateNotificationPreference = (
+    eventType: NotificationEventType,
+    channel: NotificationChannel,
+    value: boolean,
+  ) => {
+    setNotificationPrefs((prev) => ({
+      ...prev,
+      [eventType]: {
+        ...prev[eventType],
+        [channel]: value,
+      },
+    }));
+  };
+
+  const EVENT_LABELS: Record<NotificationEventType, string> = {
+    "approval-needed": "Approval needed",
+    "policy-blocked": "Policy blocked",
+    "wallet-low": "Wallet low",
+    "price-drop": "Price drop",
+    "bill-audit": "Bill audit",
+    "critical-safety": "Critical safety alerts",
+    system: "System updates",
   };
 
   useEffect(() => {
@@ -571,6 +601,46 @@ export function SettingsTab({
       {selectedRecipientId && (
         <LinkedCaregiversSection recipientId={selectedRecipientId} locale={locale} />
       )}
+
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-700">Notification preference center</h2>
+            <p className="text-xs text-slate-500 mt-1">Choose which alert types and channels caregivers receive.</p>
+          </div>
+        </div>
+        <div className="space-y-3">
+          {(Object.keys(DEFAULT_NOTIFICATION_PREFERENCES) as NotificationEventType[]).map((eventType) => {
+            const isCritical = eventType === "critical-safety";
+            return (
+              <div key={eventType} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-slate-700">{EVENT_LABELS[eventType]}</span>
+                  {isCritical && (
+                    <span className="text-[10px] uppercase tracking-wide font-semibold rounded-full bg-red-100 text-red-700 px-2 py-0.5">
+                      Always on
+                    </span>
+                  )}
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {(["email", "sms", "slack"] as NotificationChannel[]).map((channel) => (
+                    <label key={`${eventType}-${channel}`} className="flex items-center gap-2 text-xs text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={isCritical || notificationPrefs[eventType][channel]}
+                        disabled={isCritical}
+                        aria-label={`${EVENT_LABELS[eventType]} ${channel}`}
+                        onChange={(e) => updateNotificationPreference(eventType, channel, e.target.checked)}
+                      />
+                      <span className="capitalize">{channel}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <h2 className="text-sm font-semibold text-slate-700 mb-4">{t.settings.caregiver}</h2>

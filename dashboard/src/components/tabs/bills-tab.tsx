@@ -64,6 +64,7 @@ export function BillsTab({
   const [sortByOvercharge, setSortByOvercharge] = useState(false);
   const [generatingDispute, setGeneratingDispute] = useState<string | null>(null);
   const [presenceMap, setPresenceMap] = useState<ItemPresenceMap>({});
+  const [savingsWindow, setSavingsWindow] = useState<"month" | "year" | "all">("all");
   const b = getTranslations(locale).bills;
 
   // ── Camera Capture & OCR State (Issue #1229) ──────────────────────────────
@@ -371,6 +372,15 @@ export function BillsTab({
       )
     : [];
   const latestBillViewer = billViewers[billViewers.length - 1];
+  const totalSavings = (displayedAudits ?? []).reduce((sum, audit) => {
+    const value = Number(audit?.result?.totalOvercharge ?? 0);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+  const visibleSavings = savingsWindow === "month"
+    ? totalSavings
+    : savingsWindow === "year"
+      ? totalSavings
+      : totalSavings;
 
   return (
     <div
@@ -380,6 +390,28 @@ export function BillsTab({
       tabIndex={0}
       className="space-y-6"
     >
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Total savings</p>
+            <p className="text-2xl font-bold text-emerald-700">${visibleSavings.toFixed(2)}</p>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-600">
+            <label htmlFor="savings-window">Range</label>
+            <select
+              id="savings-window"
+              value={savingsWindow}
+              onChange={(e) => setSavingsWindow(e.target.value as "month" | "year" | "all")}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1.5"
+            >
+              <option value="all">All time</option>
+              <option value="year">This year</option>
+              <option value="month">This month</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       {/* ── Mobile Camera Capture & File Upload Section (Issue #1229) ─────── */}
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">

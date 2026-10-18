@@ -1885,6 +1885,12 @@ export function evaluateSpendingPolicy(
       globalBudgetRemaining: globalRemaining,
       dailyRemaining,
       monthlyRemaining,
+      exceptionRequestable: true,
+      exceptionRequest: {
+        amount,
+        category,
+        reason: "Policy-blocked payment exceeds current budget limits.",
+      },
     };
   }
 
@@ -1897,6 +1903,12 @@ export function evaluateSpendingPolicy(
       budgetRemaining: remaining,
       dailyRemaining,
       monthlyRemaining,
+      exceptionRequestable: true,
+      exceptionRequest: {
+        amount,
+        category,
+        reason: `${category} payment exceeds the current monthly budget.`,
+      },
     };
   }
 
@@ -1909,6 +1921,12 @@ export function evaluateSpendingPolicy(
       budgetRemaining: remaining,
       dailyRemaining,
       monthlyRemaining,
+      exceptionRequestable: true,
+      exceptionRequest: {
+        amount,
+        category,
+        reason: "Payment exceeds the current daily limit but is clinically time-sensitive.",
+      },
     };
   }
 
