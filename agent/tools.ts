@@ -73,6 +73,7 @@ import {
   type Transaction,
   STELLAR_MEMO_TEXT_MAX_BYTES,
 } from "../shared/types.ts";
+import { computeCategoryBreakdown } from "./spending-breakdown.ts";
 import { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds } from "./tz.ts";
 export { SPENDING_TIMEZONE, getLocalDateStr, getLocalDayBounds };
 import { appendAuditEntry } from "../shared/audit-log.ts";
@@ -1869,6 +1870,12 @@ export function checkSpendingPolicy(amount: number, category: PaymentCategory) {
       globalBudgetRemaining: globalRemaining,
       dailyRemaining,
       monthlyRemaining,
+      exceptionRequestable: true,
+      exceptionRequest: {
+        amount,
+        category,
+        reason: "Policy-blocked payment exceeds current budget limits.",
+      },
     };
   }
 
@@ -1881,6 +1888,12 @@ export function checkSpendingPolicy(amount: number, category: PaymentCategory) {
       budgetRemaining: remaining,
       dailyRemaining,
       monthlyRemaining,
+      exceptionRequestable: true,
+      exceptionRequest: {
+        amount,
+        category,
+        reason: `${category} payment exceeds the current monthly budget.`,
+      },
     };
   }
 
@@ -1893,6 +1906,12 @@ export function checkSpendingPolicy(amount: number, category: PaymentCategory) {
       budgetRemaining: remaining,
       dailyRemaining,
       monthlyRemaining,
+      exceptionRequestable: true,
+      exceptionRequest: {
+        amount,
+        category,
+        reason: "Payment exceeds the current daily limit but is clinically time-sensitive.",
+      },
     };
   }
 
@@ -2708,6 +2727,9 @@ export function getSpendingSummary() {
     },
     transactionCount: spendingTracker.transactions.length,
     recentTransactions: spendingTracker.transactions.slice(-5),
+    // Additive (#1185): per-category totals for 7d / 30d / all-time, from
+    // completed transactions. Older clients ignore it.
+    categoryBreakdown: computeCategoryBreakdown(spendingTracker.transactions),
   };
 }
 
