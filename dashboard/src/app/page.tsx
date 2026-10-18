@@ -14,6 +14,7 @@ import { MedicationsTab } from "../components/tabs/medications-tab";
 import { OverviewTab } from "../components/tabs/overview-tab";
 import { ApprovalsTab } from "../components/tabs/approvals-tab";
 import { TasksTab } from "../components/tabs/tasks-tab";
+import { HandoffNotesTab } from "../components/tabs/handoff-notes-tab";
 import { PolicyTab } from "../components/tabs/policy-tab";
 import { SettingsTab } from "../components/tabs/settings-tab";
 import { WalletTab } from "../components/tabs/wallet-tab";
@@ -197,6 +198,12 @@ export default function Dashboard() {
         )}
         {activeTab === "tasks" && (
           <TasksTab recipientId={selectedId ?? recipient.id} locale={locale} />
+        {activeTab === "notes" && (
+          <HandoffNotesTab
+            recipientId={selectedId}
+            authorName={caregiver.name}
+            locale={locale}
+          />
         )}
         {activeTab === "settings" && (
           <SettingsTab
