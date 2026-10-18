@@ -1,6 +1,6 @@
 import { mkdirSync } from 'fs';
 import { createRequire } from 'module';
-import { randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import path from 'path';
 import { logger } from '../../shared/logger.ts';
 
@@ -14,7 +14,6 @@ export interface CareRecipientRecord {
   medications: string[];
   primary_doctor: string | null;
   insurance: string | null;
-  caregiver_user_id: string | null;
 }
 
 /** Backward-compatibility alias for CareRecipientRecord (Issue #1067) */
@@ -27,7 +26,69 @@ interface CareRecipientRow {
   medications: string;
   primary_doctor: string | null;
   insurance: string | null;
-  caregiver_user_id: string | null;
+}
+
+export type CaregiverLinkStatus = 'active' | 'invited';
+
+/** A caregiver linked to a recipient. Invite and access token hashes are never exposed. */
+export interface RecipientCaregiver {
+  recipient_id: string;
+  caregiver_user_id: string;
+  email: string | null;
+  display_name: string | null;
+  role: CaregiverRole;
+  status: CaregiverLinkStatus;
+  invited_by: string | null;
+  created_at: string;
+  accepted_at: string | null;
+  invite_expires_at: string | null;
+}
+
+const CAREGIVER_COLUMNS =
+  'recipient_id, caregiver_user_id, email, display_name, role, status, invited_by, created_at, accepted_at, invite_expires_at';
+
+export interface HandoffNote {
+  id: string;
+  recipient_id: string;
+  author: string;
+  text: string;
+  created_at: string;
+}
+
+export type HandoffNoteInput = Omit<HandoffNote, 'id' | 'created_at'>;
+
+export type CaregiverAccessErrorCode =
+  | 'recipient_not_found'
+  | 'already_linked'
+  | 'invite_invalid'
+  | 'invite_expired'
+  | 'last_owner';
+
+export class CaregiverAccessError extends Error {
+  constructor(
+    readonly code: CaregiverAccessErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CaregiverAccessError';
+  }
+}
+
+/** Invite codes and access tokens: 256 bits from the CSPRNG. */
+function generateSecret(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+/**
+ * Secrets are persisted only as SHA-256 digests. A fast hash is sufficient
+ * because the inputs are 256-bit random values, not user-chosen passwords.
+ */
+function hashSecret(secret: string): string {
+  return createHash('sha256').update(secret).digest('hex');
+}
+
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 /**
@@ -82,7 +143,6 @@ function rowToRecipient(row: CareRecipientRow): CareRecipientEntity {
     medications,
     primary_doctor: row.primary_doctor ?? null,
     insurance: row.insurance ?? null,
-    caregiver_user_id: row.caregiver_user_id ?? null,
   };
 }
 
@@ -100,7 +160,25 @@ export class CareRecipientsStore {
     this.seedIfEmpty();
   }
 
+  /**
+   * Runs fn atomically. BEGIN IMMEDIATE takes the write lock up front so a
+   * read-then-write sequence cannot interleave with another connection to
+   * the same file (e.g. the vitals store).
+   */
+  private transaction<T>(fn: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = fn();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
   private migrate(): void {
+    const roles = CAREGIVER_ROLES.map((role) => `'${role}'`).join(', ');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS care_recipients (
         id TEXT PRIMARY KEY,
@@ -108,8 +186,7 @@ export class CareRecipientsStore {
         age INTEGER,
         medications TEXT NOT NULL DEFAULT '[]',
         primary_doctor TEXT,
-        insurance TEXT,
-        caregiver_user_id TEXT
+        insurance TEXT
       );
       CREATE TABLE IF NOT EXISTS approval_delegations (
         id TEXT PRIMARY KEY,
@@ -126,6 +203,34 @@ export class CareRecipientsStore {
       CREATE INDEX IF NOT EXISTS idx_approval_delegations_lookup
         ON approval_delegations (recipient_id, delegate, ends_at);
     `);
+    this.migrateLegacyCaregiverColumn();
+  }
+
+  /**
+   * Migration path (#1179): databases created before the join table stored a
+   * single care_recipients.caregiver_user_id. Each non-empty value becomes an
+   * active 'owner' link, then the column is dropped. Runs at most once (the
+   * column no longer exists afterwards) and is atomic.
+   */
+  private migrateLegacyCaregiverColumn(): void {
+    const columns = this.db.prepare('PRAGMA table_info(care_recipients)').all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'caregiver_user_id')) return;
+
+    const migratedAt = new Date().toISOString();
+    this.transaction(() => {
+      const result = this.db.prepare(`
+        INSERT OR IGNORE INTO care_recipient_caregivers
+          (recipient_id, caregiver_user_id, role, status, created_at, accepted_at)
+        SELECT id, caregiver_user_id, 'owner', 'active', ?, ?
+        FROM care_recipients
+        WHERE caregiver_user_id IS NOT NULL AND caregiver_user_id <> ''
+      `).run(migratedAt, migratedAt);
+      this.db.exec('ALTER TABLE care_recipients DROP COLUMN caregiver_user_id');
+      logger.info(
+        { migratedOwners: Number(result.changes) },
+        '[care-recipients] migrated caregiver_user_id into care_recipient_caregivers',
+      );
+    });
   }
 
   private seedIfEmpty(): void {
@@ -138,7 +243,7 @@ export class CareRecipientsStore {
       INSERT INTO care_recipients (id, name, age, medications, primary_doctor, insurance)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(
-      'rosa_garcia',
+      DEFAULT_RECIPIENT_ID,
       'Rosa Garcia',
       78,
       JSON.stringify(['Lisinopril', 'Metformin', 'Atorvastatin', 'Amlodipine']),
@@ -162,15 +267,15 @@ export class CareRecipientsStore {
     return row ? rowToRecipient(row) : undefined;
   }
 
-  create(input: Omit<CareRecipientEntity, 'id'>): CareRecipientEntity {
+  create(input: CareRecipientInput): CareRecipientEntity {
     // Date.now() alone collides under concurrent creates of the same name within
     // the same millisecond (duplicate PRIMARY KEY -> insert throws); a short
     // random suffix keeps ids readable while guaranteeing uniqueness.
     const base = input.name.toLowerCase().replace(/\s+/g, '_');
     const id = `${base}_${Date.now()}_${randomUUID().slice(0, 8)}`;
     this.db.prepare(`
-      INSERT INTO care_recipients (id, name, age, medications, primary_doctor, insurance, caregiver_user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO care_recipients (id, name, age, medications, primary_doctor, insurance)
+      VALUES (?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.name,
@@ -178,7 +283,6 @@ export class CareRecipientsStore {
       JSON.stringify(input.medications ?? []),
       input.primary_doctor ?? null,
       input.insurance ?? null,
-      input.caregiver_user_id ?? null,
     );
     return this.getById(id)!;
   }
@@ -244,4 +348,16 @@ export class CareRecipientsStore {
 
 export function createCareRecipientsStore(dbPath?: string): CareRecipientsStore {
   return new CareRecipientsStore(dbPath);
+}
+
+let sharedStore: CareRecipientsStore | undefined;
+
+/**
+ * Process-wide store shared by the HTTP routes and the agent's
+ * get_handoff_notes tool (#1180), so both use one connection and see the
+ * same data (including the in-memory database used under NODE_ENV=test).
+ */
+export function getCareRecipientsStore(): CareRecipientsStore {
+  sharedStore ??= new CareRecipientsStore();
+  return sharedStore;
 }
