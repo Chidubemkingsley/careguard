@@ -61,6 +61,8 @@ import {
 import { getAdherenceTimeline, getPendingAdherences, skipAdherence } from "../shared/adherence.ts";
 import { createVitalsStore } from "../services/vitals/db.ts";
 import { createVitalsRouter } from "../services/vitals/routes.ts";
+import { createCareRecipientsStore } from "../services/care-recipients/db.ts";
+import { authorizeApprovalActor, createDelegationsRouter } from "../services/care-recipients/delegation.ts";
 import { notify } from "../shared/notifications.ts";
 import {
   resolveStellarNetwork,
@@ -308,7 +310,13 @@ app.get("/agent/pending-approvals", (req, res) => {
   res.json({ approvals: pending, recipientId });
 });
 
-// Approve or reject a pending transaction
+// Temporary approval delegation (#1195). Same SQLite file as the unified server's store.
+const delegationStore = createCareRecipientsStore();
+app.use("/agent", createDelegationsRouter(delegationStore));
+
+// Approve or reject a pending transaction.
+// Optional body: caregiver_id (who is acting) and on_behalf_of (whose authority
+// they're using). Acting on_behalf_of someone requires an active delegation.
 app.post("/agent/approvals/:txId", async (req, res) => {
   const { txId } = req.params;
   const { approve } = req.body;
@@ -328,7 +336,8 @@ app.post("/agent/approvals/:txId", async (req, res) => {
   if (!approve) {
     (tx as any).status = "rejected";
     saveSpending(tracker);
-    return res.json({ success: true, status: "rejected" });
+    recordDecision("rejected");
+    return res.json({ success: true, status: "rejected", delegated: authz.delegated });
   }
 
   try {
@@ -741,6 +750,8 @@ app.post("/agent/adherence/skip", (req, res) => {
 
 // --- Vitals endpoints (#1237) ---
 app.use("/agent", createVitalsRouter(createVitalsStore()));
+// #1193: searchable history of past drug interaction checks.
+app.use("/agent", createInteractionChecksRouter(getInteractionCheckStore()));
 
 // --- Dispute letter endpoint (#266) ---
 app.post("/agent/dispute-letter", (req, res) => {

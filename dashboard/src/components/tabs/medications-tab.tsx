@@ -12,6 +12,7 @@ import {
 } from "../../lib/types";
 import type { AgentResult } from "../types";
 import { VitalsSection } from "../vitals-section";
+import { InteractionHistorySection } from "../interaction-history-section";
 import { getTranslations, type Locale } from "../../i18n";
 import { AGENT_URL } from "../../lib/agent-url";
 import { agentFetch } from "../../lib/agent-fetch";
@@ -303,6 +304,7 @@ export function MedicationsTab({
         </div>
       </div>
       <VitalsSection locale={locale} onVitalsChange={setVitals} />
+      <InteractionHistorySection />
 
       {/* ── Documented Allergies & Adverse Reactions (Issue #1230) ─────────── */}
       <div className="bg-white rounded-xl border border-slate-200 p-6">
