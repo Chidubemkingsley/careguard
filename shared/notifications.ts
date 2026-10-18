@@ -8,13 +8,23 @@
 import { logger } from "./logger.ts";
 
 export type NotificationLevel = "info" | "warning" | "critical";
+export type NotificationChannel = "email" | "sms" | "slack";
+export type NotificationEventType =
+  | "approval-needed"
+  | "policy-blocked"
+  | "wallet-low"
+  | "price-drop"
+  | "bill-audit"
+  | "critical-safety"
+  | "system";
 
 export interface Notification {
   level: NotificationLevel;
+  eventType?: NotificationEventType;
   title: string;
   description: string;
   context?: Record<string, unknown>;
-  channel?: "email" | "sms" | "slack" | "all";
+  channel?: NotificationChannel | "all";
   recipientEmail?: string;
   recipientPhone?: string;
 }
@@ -39,11 +49,43 @@ export interface NotificationOptIn {
   slack: boolean;
 }
 
+export type NotificationPreferenceMap = Record<
+  NotificationEventType,
+  NotificationOptIn
+>;
+
 export const DEFAULT_NOTIFICATION_OPT_IN: NotificationOptIn = {
   email: true,
   sms: false,
   slack: true,
 };
+
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferenceMap = {
+  "approval-needed": { email: true, sms: false, slack: true },
+  "policy-blocked": { email: true, sms: false, slack: true },
+  "wallet-low": { email: true, sms: true, slack: true },
+  "price-drop": { email: false, sms: false, slack: true },
+  "bill-audit": { email: true, sms: false, slack: false },
+  "critical-safety": { email: true, sms: true, slack: true },
+  system: { email: true, sms: false, slack: true },
+};
+
+export function shouldSendNotification(
+  eventType: NotificationEventType,
+  channel: NotificationChannel,
+  preferences: Partial<Record<NotificationEventType, Partial<NotificationOptIn>>> = DEFAULT_NOTIFICATION_PREFERENCES,
+): boolean {
+  if (eventType === "critical-safety") {
+    return true;
+  }
+
+  const selected = preferences[eventType] ?? DEFAULT_NOTIFICATION_PREFERENCES[eventType];
+  if (!selected) {
+    return true;
+  }
+
+  return Boolean(selected[channel]);
+}
 
 function sendSlack(n: Notification): Promise<void> {
   if (!SLACK_WEBHOOK_URL) return Promise.resolve();
@@ -131,7 +173,10 @@ async function sendSms(n: Notification): Promise<void> {
   }
 }
 
-export async function notify(n: Notification): Promise<void> {
+export async function notify(
+  n: Notification,
+  preferences: Partial<Record<NotificationEventType, Partial<NotificationOptIn>>> = DEFAULT_NOTIFICATION_PREFERENCES,
+): Promise<void> {
   const line = `${ICONS[n.level]} [${n.level.toUpperCase()}] ${n.title} — ${n.description}`;
   if (n.level === "critical" || n.level === "warning") {
     logger.warn({ title: n.title, description: n.description }, line);
@@ -139,15 +184,24 @@ export async function notify(n: Notification): Promise<void> {
     logger.info({ title: n.title, description: n.description }, line);
   }
 
+  const eventType = n.eventType ?? "system";
   const channel = n.channel || "all";
+  const channelsToSend: NotificationChannel[] =
+    channel === "all" ? ["email", "sms", "slack"] : [channel];
 
-  if (channel === "slack" || channel === "all") {
-    await sendSlack(n);
-  }
-  if (channel === "email" || channel === "all") {
-    await sendEmail(n);
-  }
-  if (channel === "sms" || channel === "all") {
-    await sendSms(n);
+  for (const nextChannel of channelsToSend) {
+    if (!shouldSendNotification(eventType, nextChannel, preferences)) {
+      continue;
+    }
+
+    if (nextChannel === "slack") {
+      await sendSlack(n);
+    }
+    if (nextChannel === "email") {
+      await sendEmail(n);
+    }
+    if (nextChannel === "sms") {
+      await sendSms(n);
+    }
   }
 }
